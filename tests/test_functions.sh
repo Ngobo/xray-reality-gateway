@@ -37,4 +37,8 @@ check "sni fallback"   "$P_SNI"  "cloudflare.com"
 check "flow default"   "$P_FLOW" "xtls-rprx-vision"
 check "fp default"     "$P_FP"   "chrome"
 
+# --- detect_lan_ifaces (with stubbed _list_candidate_ifaces) ---
+_list_candidate_ifaces() { printf '%s\n' "br0" "amn0"; }
+check "detect joins ifaces" "$(detect_lan_ifaces)" "br0, amn0"
+
 exit $fail

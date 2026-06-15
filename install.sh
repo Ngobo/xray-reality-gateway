@@ -112,6 +112,72 @@ parse_vless() {
     [[ "$P_PORT" =~ ^[0-9]+$ ]] || die "parsed port '$P_PORT' is not numeric"
 }
 
+# --- Input collection ------------------------------------------------------
+# Candidate LAN interfaces: bridges + AmneziaWG/WireGuard. Overridable in tests.
+_list_candidate_ifaces() {
+    { ip -o link show type bridge 2>/dev/null | awk -F': ' '{print $2}' | sed 's/@.*//'
+      ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | sed 's/@.*//' \
+        | grep -E '^(amn|wg)' ; } | sort -u
+}
+
+detect_lan_ifaces() {
+    local -a found=()
+    while IFS= read -r ifc; do [[ -n "$ifc" ]] && found+=("$ifc"); done < <(_list_candidate_ifaces)
+    (( ${#found[@]} == 0 )) && return
+    local out="${found[0]}"
+    local i; for (( i=1; i<${#found[@]}; i++ )); do out+=", ${found[$i]}"; done
+    printf '%s' "$out"
+}
+
+# prompt_default <prompt> <default> -> echoes the chosen value
+prompt_default() {
+    local reply
+    read -r -p "  $1 [$2]: " reply
+    printf '%s' "${reply:-$2}"
+}
+
+# Normalize "br0, amn0" -> nftables set body: "br0", "amn0"
+ifaces_to_nft_set() {
+    local raw="$1" out="" ifc
+    raw="${raw//,/ }"
+    for ifc in $raw; do [[ -n "$ifc" ]] && out+="\"$ifc\", "; done
+    printf '%s' "${out%, }"
+}
+
+collect_inputs() {
+    phase 1 "Collect configuration"
+
+    local uri=""
+    while :; do
+        read -r -p "  Paste your VLESS+Reality URI: " uri
+        if parse_vless "$uri"; then break; fi
+    done
+
+    local detected; detected="$(detect_lan_ifaces)"
+    [[ -z "$detected" ]] && detected="br0"
+    LAN_IFACES="$(prompt_default "LAN interfaces (comma-separated)" "$detected")"
+    WG_PORTS="$(prompt_default "WireGuard exempt UDP ports (comma-separated, blank to skip)" "$DEFAULT_WG_PORTS")"
+    TCP_PORT="$(prompt_default "TCP tproxy port" "$DEFAULT_TCP_PORT")"
+    UDP_PORT="$(prompt_default "UDP tproxy port" "$DEFAULT_UDP_PORT")"
+    CONFIG_PATH="$(prompt_default "xray config path" "$DEFAULT_CONFIG_PATH")"
+
+    # First WG interface (for the sport-exempt rule), if any WG iface present.
+    WG_IFACE="$(printf '%s' "$LAN_IFACES" | tr ',' '\n' | sed 's/ //g' | grep -E '^(amn|wg)' | head -n1)"
+
+    printf '\n%sConfiguration summary:%s\n' "$C_BOLD" "$C_RESET"
+    printf '  server      : %s:%s\n' "$P_HOST" "$P_PORT"
+    printf '  sni / flow  : %s / %s\n' "$P_SNI" "$P_FLOW"
+    printf '  LAN ifaces  : %s\n' "$LAN_IFACES"
+    printf '  WG exempt   : %s (iface %s)\n' "${WG_PORTS:-none}" "${WG_IFACE:-none}"
+    printf '  tproxy ports: tcp %s / udp %s\n' "$TCP_PORT" "$UDP_PORT"
+    printf '  config path : %s\n\n' "$CONFIG_PATH"
+
+    local confirm
+    read -r -p "  Proceed and apply these changes? [y/N]: " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || die "Aborted by user — no changes made."
+    ok "Inputs collected"
+}
+
 usage() {
     cat << 'USAGE'
 Xray Reality Gateway installer
@@ -144,7 +210,6 @@ parse_args() {
 
 # --- Phase stubs (filled in by later tasks) --------------------------------
 phase_preflight()       { :; }
-collect_inputs()        { :; }
 phase_install_xray()    { :; }
 phase_geo_files()       { :; }
 phase_config()          { :; }
