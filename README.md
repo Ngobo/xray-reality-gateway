@@ -97,6 +97,21 @@ two-inbound layout in the generated `config.json` and the two-chain layout in
 | LAN clients can't reach anything but the gateway itself still works | nftables loaded but xray isn't listening | `sudo xray-off` to restore direct routing, then check `journalctl -u xray`. (The installer guards against this by only loading nftables after confirming xray is listening.) |
 | WireGuard clients: ping works but DNS fails | ISP blocks UDP 53 to external resolvers | Set client `DNS` to the gateway LAN IP (see below). |
 
+## Running a VPN client behind the gateway
+
+The TCP sniffing inbound uses `"routeOnly": true`. This matters if a LAN device runs its
+own proxy/VPN client (e.g. Hiddify with a **VLESS/Reality/Trojan** config): without it,
+xray would read the connection's SNI (a Reality decoy domain like `www.microsoft.com`),
+override the destination to that decoy, and break the client's tunnel. With `routeOnly`,
+xray uses the sniffed domain only for its own routing decision and still connects to the
+**original destination IP**, so the client's Reality/VLESS handshake passes through intact.
+Geosite routing for everything else is unaffected.
+
+**WireGuard (and other UDP-based client protocols) is not handled yet.** WireGuard is
+encrypted UDP to a server IP/port that can change, so there is nothing stable to match on;
+making it pass through requires exempting the device by source IP from the UDP tproxy
+chain. That's a planned option, not yet implemented.
+
 ## Toggle the proxy
 
 ```bash

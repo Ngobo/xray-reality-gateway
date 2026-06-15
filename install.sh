@@ -260,7 +260,7 @@ phase_config() {
       "port": $TCP_PORT,
       "protocol": "dokodemo-door",
       "settings": { "network": "tcp", "followRedirect": true },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls"] },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true },
       "streamSettings": { "sockopt": { "tproxy": "redirect" } }
     },
     {
