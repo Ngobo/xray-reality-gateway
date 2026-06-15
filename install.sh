@@ -476,7 +476,54 @@ phase_verify() {
     printf '\n  %sWireGuard clients:%s set DNS = your gateway LAN IP (e.g. 192.168.0.1),\n' "$C_BOLD" "$C_RESET"
     printf '  not 1.1.1.1/8.8.8.8 — Russian ISPs block UDP 53 to external resolvers.\n'
 }
-do_uninstall()          { :; }
+do_uninstall() {
+    [[ $EUID -eq 0 ]] || die "Must run as root. Re-run with sudo."
+    local scope="full revert (removes xray binary, geo files, config)"
+    [[ "$KEEP_XRAY" == "yes" ]] && scope="plumbing only (keeps xray binary, geo files, config)"
+    printf '%sUninstall — %s%s\n' "$C_BOLD" "$scope" "$C_RESET"
+    local confirm
+    read -r -p "  Proceed? [y/N]: " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || die "Aborted — nothing changed."
+
+    phase 1 "Stop services + flush nftables"
+    systemctl stop xray 2>/dev/null || true
+    nft delete table inet xray_tproxy 2>/dev/null || true
+    ok "xray stopped, nftables table removed"
+
+    phase 2 "Remove plumbing"
+    rm -f "$NFT_FILE" "$SYSCTL_FILE" "$CRON_FILE" /usr/local/bin/xray-on /usr/local/bin/xray-off
+    rm -rf "$(dirname "$SYSTEMD_DROPIN")"
+    if [[ -e "$NFT_CONF" ]]; then
+        sed -i "\|include \"$NFT_FILE\"|d" "$NFT_CONF"
+        log "Removed include line from $NFT_CONF"
+    fi
+    systemctl daemon-reload
+    sysctl --system >/dev/null 2>&1 || true
+    ok "Plumbing removed"
+
+    if [[ "$KEEP_XRAY" == "yes" ]]; then
+        phase 3 "Done (kept xray)"
+        warn "Left in place: $XRAY_BIN, $XRAY_ASSET_DIR, $DEFAULT_CONFIG_PATH"
+    else
+        phase 3 "Purge xray"
+        systemctl disable xray 2>/dev/null || true
+        rm -f "$DEFAULT_CONFIG_PATH"
+        if [[ -x "$XRAY_BIN" ]]; then
+            bash -c "$(curl -L "$XRAY_INSTALL_URL")" @ remove --purge 2>/dev/null || true
+        fi
+        ok "xray purged"
+    fi
+
+    # Surface any backups we created earlier rather than auto-restoring.
+    local b
+    for b in "$NFT_CONF.bak" "$DEFAULT_CONFIG_PATH.bak"; do
+        [[ -e "$b" ]] && warn "Backup retained: $b (restore manually if needed)"
+    done
+
+    printf '\n%s=== Uninstalled ===%s\n' "$C_BOLD$C_GRN" "$C_RESET"
+    if nft list table inet xray_tproxy >/dev/null 2>&1; then warn "nft table still present"; else ok "nftables clean"; fi
+    if ip rule show | grep -q 'fwmark 0x1'; then warn "fwmark rule still present"; else ok "ip rules clean"; fi
+}
 
 main() {
     parse_args "$@"
