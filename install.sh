@@ -59,6 +59,59 @@ backup_file() {
     fi
 }
 
+
+# --- VLESS URI parsing -----------------------------------------------------
+urldecode() {
+    local s="${1//+/ }"
+    printf '%b' "${s//%/\\x}"
+}
+
+# Parse a vless:// URI into P_* globals. Dies on malformed input / missing fields.
+parse_vless() {
+    local uri="$1" body userinfo rest hostport query
+    uri="${uri#"${uri%%[![:space:]]*}"}"   # ltrim
+    uri="${uri%"${uri##*[![:space:]]}"}"   # rtrim
+    [[ "$uri" == vless://* ]] || die "URI must start with 'vless://'"
+
+    body="${uri#vless://}"; body="${body%%#*}"
+    userinfo="${body%%@*}"
+    rest="${body#*@}"
+    hostport="${rest%%\?*}"
+    query=""; [[ "$rest" == *\?* ]] && query="${rest#*\?}"
+
+    P_UUID="$userinfo"
+    P_HOST="${hostport%:*}"; P_HOST="${P_HOST#[}"; P_HOST="${P_HOST%]}"
+    P_PORT="${hostport##*:}"
+
+    local k v pair
+    local pbk="" sid="" sni="" host="" flow="" fp=""
+    if [[ -n "$query" ]]; then
+        local IFS='&'; local -a pairs
+        read -r -a pairs <<< "$query"
+        for pair in "${pairs[@]}"; do
+            [[ -z "$pair" ]] && continue
+            k="${pair%%=*}"; v="$(urldecode "${pair#*=}")"
+            case "$k" in
+                pbk) pbk="$v" ;; sid) sid="$v" ;; sni) sni="$v" ;;
+                host) host="$v" ;; flow) flow="$v" ;; fp) fp="$v" ;;
+            esac
+        done
+    fi
+    P_PBK="$pbk"; P_SID="$sid"
+    P_SNI="${sni:-$host}"
+    P_FLOW="${flow:-xtls-rprx-vision}"
+    P_FP="${fp:-chrome}"
+
+    local -a missing=()
+    [[ -z "$P_UUID" ]] && missing+=("uuid")
+    [[ -z "$P_HOST" ]] && missing+=("host")
+    [[ -z "$P_PORT" ]] && missing+=("port")
+    [[ -z "$P_PBK"  ]] && missing+=("pbk")
+    [[ -z "$P_SNI"  ]] && missing+=("sni")
+    (( ${#missing[@]} )) && die "URI missing required fields: ${missing[*]}"
+    [[ "$P_PORT" =~ ^[0-9]+$ ]] || die "parsed port '$P_PORT' is not numeric"
+}
+
 usage() {
     cat << 'USAGE'
 Xray Reality Gateway installer
