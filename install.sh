@@ -246,7 +246,75 @@ phase_geo_files() {
     wget -q -O "$XRAY_ASSET_DIR/geoip.dat" "$GEOIP_URL" || die "geoip.dat download failed"
     ok "Geo files updated"
 }
-phase_config()          { :; }
+phase_config() {
+    phase 4 "Generate config.json"
+    mkdir -p "$(dirname "$CONFIG_PATH")"
+    backup_file "$CONFIG_PATH"
+    cat > "$CONFIG_PATH" << EOF
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "transparent-tcp",
+      "listen": "0.0.0.0",
+      "port": $TCP_PORT,
+      "protocol": "dokodemo-door",
+      "settings": { "network": "tcp", "followRedirect": true },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls"] },
+      "streamSettings": { "sockopt": { "tproxy": "redirect" } }
+    },
+    {
+      "tag": "transparent-udp",
+      "listen": "0.0.0.0",
+      "port": $UDP_PORT,
+      "protocol": "dokodemo-door",
+      "settings": { "network": "udp", "followRedirect": true },
+      "streamSettings": { "sockopt": { "tproxy": "tproxy" } }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "$P_HOST",
+          "port": $P_PORT,
+          "users": [{ "id": "$P_UUID", "flow": "$P_FLOW", "encryption": "none" }]
+        }]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "sockopt": { "mark": 255 },
+        "realitySettings": {
+          "fingerprint": "$P_FP",
+          "serverName": "$P_SNI",
+          "publicKey": "$P_PBK",
+          "shortId": "$P_SID"
+        }
+      }
+    },
+    { "tag": "direct", "protocol": "freedom", "streamSettings": { "sockopt": { "mark": 255 } } }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      { "type": "field", "ip": ["geoip:private"], "outboundTag": "direct" },
+      { "type": "field",
+        "domain": ["geosite:ru-blocked","geosite:twitter","geosite:meta","geosite:telegram","geosite:youtube","geosite:netflix"],
+        "outboundTag": "proxy" },
+      { "type": "field", "ip": ["geoip:telegram","geoip:facebook"], "outboundTag": "proxy" },
+      { "type": "field", "network": "tcp,udp", "outboundTag": "direct" }
+    ]
+  }
+}
+EOF
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -m json.tool "$CONFIG_PATH" >/dev/null || die "generated config.json is not valid JSON"
+    fi
+    ok "Wrote $CONFIG_PATH"
+}
 phase_nftables()        { :; }
 phase_systemd_sysctl()  { :; }
 phase_helpers_cron()    { :; }
