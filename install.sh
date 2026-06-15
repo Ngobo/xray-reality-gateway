@@ -400,7 +400,49 @@ EOF
     sysctl -p "$SYSCTL_FILE" >/dev/null
     ok "systemd + sysctl configured"
 }
-phase_helpers_cron()    { :; }
+phase_helpers_cron() {
+    phase 7 "Helpers + cron"
+
+    cat > /usr/local/bin/xray-on << 'EOF'
+#!/bin/bash
+set -e
+[[ $EUID -eq 0 ]] || { echo "Run as root (sudo xray-on)" >&2; exit 1; }
+echo "=== Enabling xray transparent proxy ==="
+nft delete table inet xray_tproxy 2>/dev/null || true
+nft -f /etc/nftables.d/xray-tproxy.nft
+systemctl start xray
+echo "--- Status ---"
+printf "  xray service:   %s\n" "$(systemctl is-active xray)"
+EOF
+    chmod +x /usr/local/bin/xray-on
+
+    cat > /usr/local/bin/xray-off << 'EOF'
+#!/bin/bash
+set -e
+[[ $EUID -eq 0 ]] || { echo "Run as root (sudo xray-off)" >&2; exit 1; }
+echo "=== Disabling xray transparent proxy (all traffic direct) ==="
+systemctl stop xray
+nft delete table inet xray_tproxy 2>/dev/null || true
+echo "--- Status ---"
+printf "  xray service:   %s\n" "$(systemctl is-active xray 2>&1 || true)"
+printf "  ip fwmark rule: %s\n" "$(ip rule show | grep 'fwmark 0x1' | xargs || echo 'none — clean')"
+EOF
+    chmod +x /usr/local/bin/xray-off
+    log "Installed xray-on / xray-off helpers"
+
+    cat > "$CRON_FILE" << 'EOF'
+#!/bin/bash
+set -e
+ASSET=/usr/local/share/xray
+wget -q -O "${ASSET}/geosite.dat" \
+  https://github.com/runetfreedom/russia-blocked-geosite/releases/latest/download/geosite.dat
+wget -q -O "${ASSET}/geoip.dat" \
+  https://github.com/runetfreedom/russia-blocked-geoip/releases/latest/download/geoip.dat
+kill -SIGHUP "$(pgrep -x xray)" 2>/dev/null || true
+EOF
+    chmod +x "$CRON_FILE"
+    ok "Helpers + daily geo cron installed"
+}
 phase_enable_start()    { :; }
 phase_verify()          { :; }
 do_uninstall()          { :; }
