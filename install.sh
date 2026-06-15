@@ -380,7 +380,7 @@ phase_systemd_sysctl() {
     cat > "$SYSTEMD_DROPIN" << 'EOF'
 [Service]
 # ip policy routing for UDP tproxy: fwmark 1 -> table 100 -> route via loopback
-ExecStartPre=/bin/sh -c 'ip rule add fwmark 1 table 100 2>/dev/null || true'
+ExecStartPre=/bin/sh -c 'ip rule show | grep -q "fwmark 0x1 lookup 100" || ip rule add fwmark 1 table 100'
 ExecStartPre=/bin/sh -c 'ip route add local 0.0.0.0/0 dev lo table 100 2>/dev/null || true'
 ExecStopPost=/bin/sh -c 'ip rule del fwmark 1 table 100 2>/dev/null || true'
 ExecStopPost=/bin/sh -c 'ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null || true'
@@ -446,13 +446,22 @@ EOF
 phase_enable_start() {
     phase 8 "Enable & start services"
     systemctl enable nftables >/dev/null 2>&1 || true
-    nft -f "$NFT_FILE"
+    # Start xray FIRST and confirm it is listening before loading the nftables
+    # tproxy rules. If xray failed (bad URI, missing caps), loading the rules would
+    # blackhole all LAN-client TCP to a dead port until 'xray-off'.
     systemctl enable --now xray
     sleep 1
-    if ss -tlnp 2>/dev/null | grep -q ":$TCP_PORT "; then ok "TCP tproxy listening on :$TCP_PORT"
-    else warn "No listener on :$TCP_PORT — check 'journalctl -u xray'"; fi
-    if ss -ulnp 2>/dev/null | grep -q ":$UDP_PORT "; then ok "UDP tproxy listening on :$UDP_PORT"
-    else warn "No listener on :$UDP_PORT — check 'journalctl -u xray'"; fi
+    local tcp_up="no" udp_up="no"
+    ss -tlnp 2>/dev/null | grep -q ":$TCP_PORT " && tcp_up="yes"
+    ss -ulnp 2>/dev/null | grep -q ":$UDP_PORT " && udp_up="yes"
+    if [[ "$tcp_up" == "yes" && "$udp_up" == "yes" ]]; then
+        ok "xray listening on tcp :$TCP_PORT / udp :$UDP_PORT"
+        nft -f "$NFT_FILE"
+        ok "nftables tproxy rules loaded"
+    else
+        warn "xray not listening (tcp:$tcp_up udp:$udp_up) — NOT loading nftables to avoid blackholing LAN traffic"
+        warn "Inspect 'journalctl -u xray'; once fixed, run 'sudo xray-on' to load the rules"
+    fi
 }
 
 _check_url() {  # _check_url <label> <url>
