@@ -33,6 +33,32 @@ MODE="install"      # install | uninstall
 KEEP_XRAY="no"      # uninstall modifier
 QUIET="no"
 
+# --- Logging ---------------------------------------------------------------
+if [[ -t 1 ]]; then
+    C_RESET="$(tput sgr0)"; C_RED="$(tput setaf 1)"; C_GRN="$(tput setaf 2)"
+    C_YEL="$(tput setaf 3)"; C_BLU="$(tput setaf 4)"; C_BOLD="$(tput bold)"
+else
+    C_RESET=""; C_RED=""; C_GRN=""; C_YEL=""; C_BLU=""; C_BOLD=""
+fi
+
+PHASE_TOTAL=9
+phase() {  # phase <num> <title>
+    printf '\n%s==> [%s/%s] %s%s\n' "$C_BOLD$C_BLU" "$1" "$PHASE_TOTAL" "$2" "$C_RESET"
+}
+log()  { [[ "$QUIET" == "yes" ]] && return 0; printf '  %s•%s %s\n' "$C_BLU" "$C_RESET" "$*"; }
+ok()   { printf '  %s✓%s %s\n' "$C_GRN" "$C_RESET" "$*"; }
+warn() { printf '  %s!%s %s\n' "$C_YEL" "$C_RESET" "$*" >&2; }
+die()  { printf '  %s✗%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+# Back up an existing file to <file>.bak before it is overwritten.
+backup_file() {
+    local f="$1"
+    if [[ -e "$f" ]]; then
+        cp -a "$f" "${f}.bak"
+        warn "$f existed — backed up to ${f}.bak"
+    fi
+}
+
 usage() {
     cat << 'USAGE'
 Xray Reality Gateway installer
