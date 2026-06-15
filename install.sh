@@ -209,9 +209,43 @@ parse_args() {
 }
 
 # --- Phase stubs (filled in by later tasks) --------------------------------
-phase_preflight()       { :; }
-phase_install_xray()    { :; }
-phase_geo_files()       { :; }
+phase_preflight() {
+    phase 0 "Preflight"
+    [[ $EUID -eq 0 ]] || die "Must run as root. Re-run with sudo."
+    if [[ -r /etc/os-release ]]; then
+        # shellcheck source=/dev/null
+        . /etc/os-release
+        [[ "${ID:-}" == "ubuntu" ]] || warn "Not Ubuntu (${PRETTY_NAME:-unknown}) — continuing best-effort."
+    fi
+    local missing=()
+    for tool in curl wget nft; do command -v "$tool" >/dev/null 2>&1 || missing+=("$tool"); done
+    if (( ${#missing[@]} )); then
+        log "Installing missing tools: ${missing[*]}"
+        apt-get update -qq && apt-get install -y "${missing[@]}" >/dev/null
+    fi
+    ok "Preflight complete"
+}
+phase_install_xray() {
+    phase 2 "Install xray"
+    if [[ -x "$XRAY_BIN" ]] && "$XRAY_BIN" version 2>/dev/null | grep -q "Xray $XRAY_VERSION"; then
+        ok "xray $XRAY_VERSION already installed — skipping"
+        return
+    fi
+    log "Running official XTLS install script"
+    bash -c "$(curl -L "$XRAY_INSTALL_URL")" @ install
+    "$XRAY_BIN" version | head -n1 | grep -q "Xray $XRAY_VERSION" \
+        || warn "Installed xray version differs from expected $XRAY_VERSION"
+    ok "xray installed"
+}
+phase_geo_files() {
+    phase 3 "Geo files (runetfreedom)"
+    mkdir -p "$XRAY_ASSET_DIR"
+    log "Downloading geosite.dat"
+    wget -q -O "$XRAY_ASSET_DIR/geosite.dat" "$GEOSITE_URL" || die "geosite.dat download failed"
+    log "Downloading geoip.dat"
+    wget -q -O "$XRAY_ASSET_DIR/geoip.dat" "$GEOIP_URL" || die "geoip.dat download failed"
+    ok "Geo files updated"
+}
 phase_config()          { :; }
 phase_nftables()        { :; }
 phase_systemd_sysctl()  { :; }
