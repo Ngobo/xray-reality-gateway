@@ -443,8 +443,39 @@ EOF
     chmod +x "$CRON_FILE"
     ok "Helpers + daily geo cron installed"
 }
-phase_enable_start()    { :; }
-phase_verify()          { :; }
+phase_enable_start() {
+    phase 8 "Enable & start services"
+    systemctl enable nftables >/dev/null 2>&1 || true
+    nft -f "$NFT_FILE"
+    systemctl enable --now xray
+    sleep 1
+    if ss -tlnp 2>/dev/null | grep -q ":$TCP_PORT "; then ok "TCP tproxy listening on :$TCP_PORT"
+    else warn "No listener on :$TCP_PORT — check 'journalctl -u xray'"; fi
+    if ss -ulnp 2>/dev/null | grep -q ":$UDP_PORT "; then ok "UDP tproxy listening on :$UDP_PORT"
+    else warn "No listener on :$UDP_PORT — check 'journalctl -u xray'"; fi
+}
+
+_check_url() {  # _check_url <label> <url>
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$2" || echo 000)"
+    if [[ "$code" == "200" ]]; then ok "$1 -> HTTP $code"; else warn "$1 -> HTTP $code"; fi
+}
+
+phase_verify() {
+    phase 9 "Verify"
+    _check_url "direct   (ya.ru)"      "https://ya.ru"
+    _check_url "proxied  (google.com)" "https://google.com"
+    _check_url "geosite  (instagram)"  "https://instagram.com"
+    _check_url "geosite  (youtube)"    "https://youtube.com"
+
+    printf '\n%s=== Gateway ready ===%s\n' "$C_BOLD$C_GRN" "$C_RESET"
+    printf '  xray:        %s\n' "$(systemctl is-active xray)"
+    printf '  tproxy:      tcp :%s  udp :%s\n' "$TCP_PORT" "$UDP_PORT"
+    printf '  toggle:      sudo xray-off  /  sudo xray-on\n'
+    printf '  uninstall:   bash <(curl -sL https://raw.githubusercontent.com/Ngobo/xray-reality-gateway/main/install.sh) --uninstall\n'
+    printf '\n  %sWireGuard clients:%s set DNS = your gateway LAN IP (e.g. 192.168.0.1),\n' "$C_BOLD" "$C_RESET"
+    printf '  not 1.1.1.1/8.8.8.8 — Russian ISPs block UDP 53 to external resolvers.\n'
+}
 do_uninstall()          { :; }
 
 main() {
