@@ -373,7 +373,33 @@ EOF
     fi
     ok "nftables rules written"
 }
-phase_systemd_sysctl()  { :; }
+phase_systemd_sysctl() {
+    phase 6 "systemd drop-in + sysctl"
+    mkdir -p "$(dirname "$SYSTEMD_DROPIN")"
+    backup_file "$SYSTEMD_DROPIN"
+    cat > "$SYSTEMD_DROPIN" << 'EOF'
+[Service]
+# ip policy routing for UDP tproxy: fwmark 1 -> table 100 -> route via loopback
+ExecStartPre=/bin/sh -c 'ip rule add fwmark 1 table 100 2>/dev/null || true'
+ExecStartPre=/bin/sh -c 'ip route add local 0.0.0.0/0 dev lo table 100 2>/dev/null || true'
+ExecStopPost=/bin/sh -c 'ip rule del fwmark 1 table 100 2>/dev/null || true'
+ExecStopPost=/bin/sh -c 'ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null || true'
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+NoNewPrivileges=false
+EOF
+    systemctl daemon-reload
+    log "systemd drop-in written"
+
+    backup_file "$SYSCTL_FILE"
+    cat > "$SYSCTL_FILE" << 'EOF'
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.lo.rp_filter = 0
+EOF
+    sysctl -p "$SYSCTL_FILE" >/dev/null
+    ok "systemd + sysctl configured"
+}
 phase_helpers_cron()    { :; }
 phase_enable_start()    { :; }
 phase_verify()          { :; }
