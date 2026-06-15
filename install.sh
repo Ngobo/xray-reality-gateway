@@ -315,7 +315,64 @@ EOF
     fi
     ok "Wrote $CONFIG_PATH"
 }
-phase_nftables()        { :; }
+phase_nftables() {
+    phase 5 "nftables rules"
+    mkdir -p "$(dirname "$NFT_FILE")"
+    backup_file "$NFT_FILE"
+
+    local iface_set; iface_set="$(ifaces_to_nft_set "$LAN_IFACES")"
+    # Optional WireGuard sport-exempt line (only if both an iface and ports were given).
+    local wg_line=""
+    if [[ -n "$WG_PORTS" && -n "$WG_IFACE" ]]; then
+        wg_line="        iifname \"$WG_IFACE\" udp sport { $WG_PORTS } return"
+    fi
+
+    cat > "$NFT_FILE" << EOF
+table inet xray_tproxy {
+    set private_ranges {
+        type ipv4_addr
+        flags interval
+        elements = {
+            0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10,
+            127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+            192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15,
+            224.0.0.0/4, 240.0.0.0/4
+        }
+    }
+
+    chain prerouting_nat {
+        type nat hook prerouting priority dstnat; policy accept;
+        meta mark 0x000000ff return
+        fib daddr type local return
+        iifname != { $iface_set } return
+        ip daddr @private_ranges return
+        ip protocol tcp redirect to :$TCP_PORT
+    }
+
+    chain prerouting_mangle {
+        type filter hook prerouting priority mangle; policy accept;
+        meta mark 0x000000ff return
+        fib daddr type local return
+$wg_line
+        iifname != { $iface_set } return
+        ip daddr @private_ranges return
+        ip protocol udp tproxy ip to :$UDP_PORT meta mark set 0x00000001
+    }
+}
+EOF
+    # Drop the blank line left when wg_line is empty, to keep the file tidy.
+    sed -i '/^$/{N;/^\n$/D}' "$NFT_FILE"
+
+    backup_file "$NFT_CONF"
+    [[ -e "$NFT_CONF" ]] || printf '#!/usr/sbin/nft -f\n' > "$NFT_CONF"
+    if ! grep -qF "include \"$NFT_FILE\"" "$NFT_CONF"; then
+        printf 'include "%s"\n' "$NFT_FILE" >> "$NFT_CONF"
+        log "Added include line to $NFT_CONF"
+    else
+        log "include line already present in $NFT_CONF"
+    fi
+    ok "nftables rules written"
+}
 phase_systemd_sysctl()  { :; }
 phase_helpers_cron()    { :; }
 phase_enable_start()    { :; }
