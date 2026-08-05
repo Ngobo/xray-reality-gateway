@@ -41,4 +41,26 @@ check "fp default"     "$P_FP"   "chrome"
 _list_candidate_ifaces() { printf '%s\n' "br0" "amn0"; }
 check "detect joins ifaces" "$(detect_lan_ifaces)" "br0, amn0"
 
+# --- phase_nftables: proxy-port scoping (render tests) ---
+LAN_IFACES="br0" WG_PORTS="" WG_IFACE="" TCP_PORT=12345 UDP_PORT=12346 QUIET=yes
+NFT_FILE="$(mktemp)" NFT_CONF="$(mktemp)"
+
+PROXY_TCP_PORTS="80,443" PROXY_UDP_PORTS="443"
+phase_nftables >/dev/null
+if grep -q 'tcp dport != { 80,443 } return' "$NFT_FILE" && grep -q 'udp dport != { 443 } return' "$NFT_FILE"; then
+    check "proxy ports scoped" "yes" "yes"
+else
+    check "proxy ports scoped" "no" "yes"
+fi
+
+PROXY_TCP_PORTS="" PROXY_UDP_PORTS=""
+phase_nftables >/dev/null
+if grep -q 'dport !=' "$NFT_FILE"; then
+    check "blank proxy ports = no scoping" "scoped" "unscoped"
+else
+    check "blank proxy ports = no scoping" "unscoped" "unscoped"
+fi
+
+rm -f "$NFT_FILE" "$NFT_CONF" "$NFT_FILE.bak" "$NFT_CONF.bak"
+
 exit $fail

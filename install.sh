@@ -27,6 +27,8 @@ DEFAULT_CONFIG_PATH="/usr/local/etc/xray/config.json"
 DEFAULT_TCP_PORT="12345"
 DEFAULT_UDP_PORT="12346"
 DEFAULT_WG_PORTS="44781,36916"
+DEFAULT_PROXY_TCP_PORTS="80,443"
+DEFAULT_PROXY_UDP_PORTS="443"
 
 # --- Mode flags ------------------------------------------------------------
 MODE="install"      # install | uninstall
@@ -157,6 +159,8 @@ collect_inputs() {
     [[ -z "$detected" ]] && detected="br0"
     LAN_IFACES="$(prompt_default "LAN interfaces (comma-separated)" "$detected")"
     WG_PORTS="$(prompt_default "WireGuard exempt UDP ports (comma-separated, blank to skip)" "$DEFAULT_WG_PORTS")"
+    PROXY_TCP_PORTS="$(prompt_default "TCP ports to intercept for proxying (comma-separated, blank = all ports)" "$DEFAULT_PROXY_TCP_PORTS")"
+    PROXY_UDP_PORTS="$(prompt_default "UDP ports to intercept for proxying (comma-separated, blank = all ports)" "$DEFAULT_PROXY_UDP_PORTS")"
     TCP_PORT="$(prompt_default "TCP tproxy port" "$DEFAULT_TCP_PORT")"
     UDP_PORT="$(prompt_default "UDP tproxy port" "$DEFAULT_UDP_PORT")"
     CONFIG_PATH="$(prompt_default "xray config path" "$DEFAULT_CONFIG_PATH")"
@@ -169,6 +173,7 @@ collect_inputs() {
     printf '  sni / flow  : %s / %s\n' "$P_SNI" "$P_FLOW"
     printf '  LAN ifaces  : %s\n' "$LAN_IFACES"
     printf '  WG exempt   : %s (iface %s)\n' "${WG_PORTS:-none}" "${WG_IFACE:-none}"
+    printf '  proxy ports : tcp %s / udp %s (blank = all — other ports never touch xray)\n' "${PROXY_TCP_PORTS:-all}" "${PROXY_UDP_PORTS:-all}"
     printf '  tproxy ports: tcp %s / udp %s\n' "$TCP_PORT" "$UDP_PORT"
     printf '  config path : %s\n\n' "$CONFIG_PATH"
 
@@ -326,6 +331,13 @@ phase_nftables() {
     if [[ -n "$WG_PORTS" && -n "$WG_IFACE" ]]; then
         wg_line="        iifname \"$WG_IFACE\" udp sport { $WG_PORTS } return"
     fi
+    # Optional proxy-port scoping: only the listed ports ever reach xray, so
+    # anything else (WireGuard, games, other services) never enters the tproxy
+    # chains at all and just routes normally — no per-destination exclusion
+    # needed. Blank = intercept every port (previous behavior).
+    local tcp_port_scope="" udp_port_scope=""
+    [[ -n "$PROXY_TCP_PORTS" ]] && tcp_port_scope="        tcp dport != { $PROXY_TCP_PORTS } return"
+    [[ -n "$PROXY_UDP_PORTS" ]] && udp_port_scope="        udp dport != { $PROXY_UDP_PORTS } return"
 
     cat > "$NFT_FILE" << EOF
 table inet xray_tproxy {
@@ -346,6 +358,7 @@ table inet xray_tproxy {
         fib daddr type local return
         iifname != { $iface_set } return
         ip daddr @private_ranges return
+$tcp_port_scope
         ip protocol tcp redirect to :$TCP_PORT
     }
 
@@ -356,6 +369,7 @@ table inet xray_tproxy {
 $wg_line
         iifname != { $iface_set } return
         ip daddr @private_ranges return
+$udp_port_scope
         ip protocol udp tproxy ip to :$UDP_PORT meta mark set 0x00000001
     }
 }

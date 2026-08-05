@@ -25,6 +25,8 @@ connectivity checks.
 | VLESS+Reality URI | — | `vless://UUID@HOST:PORT?...` from your 3x-ui panel. Required. |
 | LAN interfaces | auto-detected | Comma-separated; bridges + `amn*`/`wg*` are detected. |
 | WireGuard exempt UDP ports | `44781,36916` | Blank to skip (boxes without AmneziaWG). |
+| TCP ports to intercept for proxying | `80,443` | Blank = intercept every TCP port (old behavior). |
+| UDP ports to intercept for proxying | `443` | Blank = intercept every UDP port (old behavior). |
 | TCP tproxy port | `12345` | |
 | UDP tproxy port | `12346` | |
 | config path | `/usr/local/etc/xray/config.json` | |
@@ -107,10 +109,15 @@ xray uses the sniffed domain only for its own routing decision and still connect
 **original destination IP**, so the client's Reality/VLESS handshake passes through intact.
 Geosite routing for everything else is unaffected.
 
-**WireGuard (and other UDP-based client protocols) is not handled yet.** WireGuard is
-encrypted UDP to a server IP/port that can change, so there is nothing stable to match on;
-making it pass through requires exempting the device by source IP from the UDP tproxy
-chain. That's a planned option, not yet implemented.
+**WireGuard (and other non-web UDP client protocols) work automatically as long as their
+port isn't in "UDP ports to intercept for proxying".** The nftables chains only redirect
+the listed ports (`80,443`/`443` by default — the ports censorship actually targets) into
+xray at all; anything else, including an outbound WireGuard tunnel from a LAN device to a
+remote server, never enters the tproxy chain and routes normally with no configuration
+needed. If you need a specific port proxied *and* another exempted, list it explicitly, or
+leave both proxy-port prompts blank to fall back to the old catch-everything behavior (in
+which case use "WireGuard exempt UDP ports" above, which matches by source, not
+destination, and only helps a WireGuard **server** hosted on the gateway itself).
 
 ## Toggle the proxy
 
