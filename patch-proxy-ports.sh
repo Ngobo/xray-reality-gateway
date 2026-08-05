@@ -10,8 +10,10 @@
 # updates the existing scope lines instead of duplicating them. Backs up the nft file
 # to <file>.bak before editing.
 #
-# Run on the gateway:
-#   sudo bash <(curl -sL https://raw.githubusercontent.com/Ngobo/xray-reality-gateway/main/patch-proxy-ports.sh)
+# Run on the gateway (no interactive prompts, so the plain pipe form is fine —
+# "sudo bash <(curl ...)" can fail with "/dev/fd/N: No such file or directory"
+# because sudo drops fds above stdin/stdout/stderr):
+#   curl -sL https://raw.githubusercontent.com/Ngobo/xray-reality-gateway/main/patch-proxy-ports.sh | sudo bash
 # Or with custom ports / a non-default nft file:
 #   sudo TCP_PORTS=80,443 UDP_PORTS=443 ./patch-proxy-ports.sh /path/to/xray-tproxy.nft
 #
